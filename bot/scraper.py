@@ -3,7 +3,7 @@ import json
 import logging
 import httpx
 from bs4 import BeautifulSoup
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 from playwright.async_api import async_playwright
 from playwright_stealth import Stealth
 
@@ -24,20 +24,40 @@ def _build_scraper_url(target_url: str) -> str:
     return f"{SCRAPERAPI_BASE}?api_key={key}&url={quote(target_url, safe='')}"
 
 
-def _parse_amazon_price(html: str) -> float | None:
+def _amazon_name_from_url(url: str) -> str:
+    """Best-effort name from the URL slug (e.g. MSI-Laptop-... → MSI Laptop ...)."""
+    parts = [p for p in urlparse(url).path.split("/") if p and p != "dp"]
+    for part in parts:
+        if not part.startswith("B0") and len(part) > 6:
+            return part.replace("-", " ").strip()
+    return parts[0].replace("-", " ") if parts else "Unknown"
+
+
+def _parse_amazon(html: str, url: str) -> tuple[float | None, str]:
     soup = BeautifulSoup(html, "html.parser")
-    tag = soup.select_one("span.a-price-whole")
-    if not tag:
-        return None
-    try:
-        raw = tag.get_text(strip=True).replace(",", "").replace("₹", "").replace("\xa0", "").rstrip(".")
-        return round(float(raw), 2)
-    except ValueError:
-        return None
+
+    # Price
+    price_tag = soup.select_one("span.a-price-whole")
+    price = None
+    if price_tag:
+        try:
+            raw = price_tag.get_text(strip=True).replace(",", "").replace("₹", "").replace("\xa0", "").rstrip(".")
+            price = round(float(raw), 2)
+        except ValueError:
+            pass
+
+    # Name — prefer page title element, fall back to URL slug
+    name_tag = soup.select_one("span#productTitle")
+    if name_tag:
+        name = name_tag.get_text(strip=True)
+    else:
+        name = _amazon_name_from_url(url)
+
+    return price, name
 
 
-def _parse_flipkart_price(html: str) -> float | None:
-    """Extract price from Flipkart's JSON-LD structured data (stable across redesigns)."""
+def _parse_flipkart(html: str) -> tuple[float | None, str]:
+    """Extract price and name from Flipkart's JSON-LD structured data."""
     soup = BeautifulSoup(html, "html.parser")
     for tag in soup.find_all("script", type="application/ld+json"):
         try:
@@ -45,17 +65,18 @@ def _parse_flipkart_price(html: str) -> float | None:
             items = data if isinstance(data, list) else [data]
             for item in items:
                 if item.get("@type") == "Product":
+                    name = item.get("name", "Unknown")
                     offers = item.get("offers", {})
-                    price = offers.get("price")
-                    if price is not None:
-                        return round(float(price), 2)
+                    raw_price = offers.get("price")
+                    price = round(float(raw_price), 2) if raw_price is not None else None
+                    return price, name
         except (json.JSONDecodeError, ValueError, AttributeError):
             continue
-    return None
+    return None, "Unknown"
 
 
-async def _fetch_flipkart_price(url: str) -> float | None:
-    """Use Playwright stealth to render Flipkart and extract price from JSON-LD."""
+async def _fetch_flipkart(url: str) -> tuple[float | None, str]:
+    """Use Playwright stealth to render Flipkart and extract price + name from JSON-LD."""
     try:
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True)
@@ -75,27 +96,27 @@ async def _fetch_flipkart_price(url: str) -> float | None:
             await page.wait_for_timeout(3000)
             html = await page.content()
             await browser.close()
-        return _parse_flipkart_price(html)
+        return _parse_flipkart(html)
     except Exception as exc:
         logger.warning("Flipkart Playwright scrape failed for %s: %s", url, exc)
-        return None
+        return None, "Unknown"
 
 
-async def fetch_price(url: str) -> tuple[float | None, str]:
-    """Return (price, platform). Price is None if scraping fails."""
+async def fetch_price(url: str) -> tuple[float | None, str, str]:
+    """Return (price, platform, product_name). Price is None if scraping fails."""
     platform = _detect_platform(url)
     try:
         if platform == "flipkart":
-            price = await _fetch_flipkart_price(url)
-            return price, platform
+            price, name = await _fetch_flipkart(url)
+            return price, platform, name
 
         # Amazon via ScraperAPI
         scraper_url = _build_scraper_url(url)
         async with httpx.AsyncClient(timeout=30) as client:
             response = await client.get(scraper_url)
             response.raise_for_status()
-            price = _parse_amazon_price(response.text)
-            return price, platform
+            price, name = _parse_amazon(response.text, url)
+            return price, platform, name
     except Exception as exc:
         logger.warning("Scrape failed for %s: %s", url, exc)
-        return None, platform
+        return None, platform, "Unknown"

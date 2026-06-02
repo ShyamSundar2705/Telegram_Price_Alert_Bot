@@ -14,7 +14,7 @@ async def check_prices_job(app):
         if not item.get("product_url"):
             continue
 
-        new_price, _ = await fetch_price(item["product_url"])
+        new_price, _, _name = await fetch_price(item["product_url"])
         if new_price is None:
             logger.warning("Could not fetch price for item %s, skipping", item["id"])
             continue

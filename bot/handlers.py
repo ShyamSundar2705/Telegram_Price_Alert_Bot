@@ -69,17 +69,13 @@ async def watch_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Fetching current price, please wait...")
 
     try:
-        price, platform = await fetch_price(url)
+        price, platform, product_name = await fetch_price(url)
 
         if price is None:
             await update.message.reply_text(
                 "Could not fetch the price. Please check the URL and try again."
             )
             return
-
-        # Use the last part of the path as a fallback product name
-        path_parts = [p for p in urlparse(url).path.split("/") if p]
-        product_name = path_parts[-1] if path_parts else url
 
         await add_watch(
             user_id=user_id,
@@ -161,16 +157,13 @@ async def handle_shared_message(update: Update, context: ContextTypes.DEFAULT_TY
         if any(d in domain for d in SHORT_DOMAINS):
             product_url = await _resolve_url(product_url)
 
-        price, platform = await fetch_price(product_url)
+        price, platform, product_name = await fetch_price(product_url)
         if price is None:
             await update.message.reply_text(
                 "Found a product URL but couldn't fetch its price. "
                 "The item may be unavailable."
             )
             return
-
-        path_parts = [p for p in urlparse(product_url).path.split("/") if p]
-        product_name = path_parts[-1] if path_parts else product_url
 
         await add_watch(
             user_id=user_id,
