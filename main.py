@@ -1,10 +1,10 @@
 import os
 import logging
 from dotenv import load_dotenv
-from telegram.ext import ApplicationBuilder, CommandHandler
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from bot.database import init_db
-from bot.handlers import start_handler, watch_handler, list_handler, unwatch_handler
+from bot.handlers import start_handler, watch_handler, list_handler, unwatch_handler, handle_shared_message
 from bot.scheduler import check_prices_job
 
 load_dotenv()
@@ -34,6 +34,7 @@ def main():
     app.add_handler(CommandHandler("watch", watch_handler))
     app.add_handler(CommandHandler("list", list_handler))
     app.add_handler(CommandHandler("unwatch", unwatch_handler))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_shared_message))
 
     scheduler = AsyncIOScheduler()
     scheduler.add_job(

@@ -1,4 +1,6 @@
 import logging
+import re
+import httpx
 from urllib.parse import urlparse
 from telegram import Update
 from telegram.ext import ContextTypes
@@ -8,6 +10,20 @@ from bot.scraper import fetch_price
 logger = logging.getLogger(__name__)
 
 SUPPORTED_DOMAINS = {"amazon.in", "amazon.com", "flipkart.com"}
+SHORT_DOMAINS = {"amzn.in", "amzn.to", "fkrt.it"}
+ALL_WATCHED_DOMAINS = SUPPORTED_DOMAINS | SHORT_DOMAINS | {"amazon.in", "amazon.com"}
+
+_URL_RE = re.compile(r"https?://\S+")
+
+
+async def _resolve_url(url: str) -> str:
+    """Follow redirects and return the final URL (handles amzn.in/amzn.to/fkrt.it)."""
+    try:
+        async with httpx.AsyncClient(follow_redirects=True, timeout=15) as client:
+            r = await client.head(url)
+            return str(r.url)
+    except Exception:
+        return url
 
 
 def _is_url(text: str) -> bool:
@@ -122,3 +138,54 @@ async def unwatch_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as exc:
         logger.exception("Error in unwatch_handler: %s", exc)
         await update.message.reply_text("Could not remove that item. Please try again.")
+
+
+async def handle_shared_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text or ""
+    urls = _URL_RE.findall(text)
+
+    product_url = None
+    for raw_url in urls:
+        domain = urlparse(raw_url).netloc.replace("www.", "")
+        if any(d in domain for d in SUPPORTED_DOMAINS | SHORT_DOMAINS):
+            product_url = raw_url
+            break
+
+    if not product_url:
+        return
+
+    user_id = str(update.effective_user.id)
+    try:
+        # Resolve short links before scraping
+        domain = urlparse(product_url).netloc.replace("www.", "")
+        if any(d in domain for d in SHORT_DOMAINS):
+            product_url = await _resolve_url(product_url)
+
+        price, platform = await fetch_price(product_url)
+        if price is None:
+            await update.message.reply_text(
+                "Found a product URL but couldn't fetch its price. "
+                "The item may be unavailable."
+            )
+            return
+
+        path_parts = [p for p in urlparse(product_url).path.split("/") if p]
+        product_name = path_parts[-1] if path_parts else product_url
+
+        await add_watch(
+            user_id=user_id,
+            query=product_url,
+            platform=platform,
+            product_url=product_url,
+            product_name=product_name,
+            current_price=price,
+        )
+
+        await update.message.reply_text(
+            f"✅ Added to watchlist!\n{product_name}\n"
+            f"Current price: ₹{price:.2f}\n"
+            "I'll notify you if it drops."
+        )
+    except Exception as exc:
+        logger.exception("Error in handle_shared_message: %s", exc)
+        await update.message.reply_text("Something went wrong. Please try again later.")
