@@ -1,7 +1,8 @@
+import os
 import aiosqlite
 from datetime import datetime
 
-DB_PATH = "/app/data/prices.db"
+DB_PATH = os.getenv("DB_PATH", "data/prices.db")
 
 
 async def init_db():

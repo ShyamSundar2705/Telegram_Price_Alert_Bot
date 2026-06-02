@@ -6,12 +6,12 @@ from urllib.parse import quote
 
 logger = logging.getLogger(__name__)
 
-SCRAPERAPI_KEY = os.getenv("SCRAPERAPI_KEY", "")
 SCRAPERAPI_BASE = "http://api.scraperapi.com"
 
 
 def _build_scraper_url(target_url: str) -> str:
-    return f"{SCRAPERAPI_BASE}?api_key={SCRAPERAPI_KEY}&url={quote(target_url, safe='')}"
+    key = os.getenv("SCRAPERAPI_KEY", "")
+    return f"{SCRAPERAPI_BASE}?api_key={key}&url={quote(target_url, safe='')}"
 
 
 def _detect_platform(url: str) -> str:

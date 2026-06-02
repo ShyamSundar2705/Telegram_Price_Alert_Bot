@@ -67,3 +67,22 @@ CREATE TABLE IF NOT EXISTS watched_items (
 - Screenshot placeholder: ![Demo](assets/demo.gif)
 - Setup: 3 steps (clone → .env → docker-compose up)
 - Sample /watch and /list output shown as code blocks
+
+## Shared product detection (message handler)
+Add a MessageHandler with filters.TEXT that runs on every non-command message.
+In handle_shared_message(update, context):
+  1. Extract URLs from message text using regex: r'https?://\S+'
+  2. Check if any URL matches Amazon or Flipkart domains:
+     - Amazon: amzn.in, amazon.in, amzn.to, amazon.com
+     - Flipkart: flipkart.com, fkrt.it (short URL)
+  3. If match found:
+     - Resolve short URLs (amzn.in, amzn.to, fkrt.it) by following redirects with httpx
+     - Scrape price immediately
+     - Auto-add to watched_items for that user
+     - Reply: "✅ Added to watchlist!\n{product_name}\nCurrent price: ₹{price}\nI'll notify you if it drops."
+  4. If no URL match: ignore the message silently (don't reply)
+
+Short URL resolution:
+  async with httpx.AsyncClient(follow_redirects=True) as client:
+      r = await client.head(short_url)
+      return str(r.url)  # final resolved URL
