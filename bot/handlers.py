@@ -17,10 +17,11 @@ _URL_RE = re.compile(r"https?://\S+")
 
 
 async def _resolve_url(url: str) -> str:
-    """Follow redirects and return the final URL (handles amzn.in/amzn.to/fkrt.it)."""
+    """Follow redirects and return the final URL (handles amzn.in/amzn.to/fkrt.it).
+    Uses GET because Amazon short links return 404 on HEAD requests."""
     try:
         async with httpx.AsyncClient(follow_redirects=True, timeout=15) as client:
-            r = await client.head(url)
+            r = await client.get(url)
             return str(r.url)
     except Exception:
         return url
